@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  sandbox-image:
+    build:
+      context: ./sandbox
+    image: mio-sandbox-python:latest
+    # This service never runs — its only job is to build/tag the image that
+    # the backend's Docker-in-Docker sandbox executor launches per code run.
+    entrypoint: ["true"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    environment:
+      MIO_REDIS_URL: redis://redis:6379/0
+      MIO_GROQ_API_KEY: ${MIO_GROQ_API_KEY}
+      MIO_DOCKER_SANDBOX_IMAGE: mio-sandbox-python:latest
+    depends_on:
+      redis:
+        condition: service_healthy
+      sandbox-image:
+        condition: service_completed_successfully
+    volumes:
+      # Mount the host Docker socket so the backend can launch sandbox
+      # containers as *siblings* (not nested Docker-in-Docker).
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  redis-data:
